@@ -4,4 +4,6 @@ numpy
 plotly
 fitparse
 scikit-learn
-scipy 
+scipy
+streamlit-bokeh-events
+streamlit-plotly-events

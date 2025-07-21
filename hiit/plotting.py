@@ -12,6 +12,9 @@ from hiit.data_io import load_manual_window_settings
 from hiit.metrics import calculate_interval_metrics, analyze_interval_performance, fit_hr_curve
 import pandas as pd
 import altair as alt
+from bokeh.plotting import figure
+from bokeh.models import RangeTool, LinearAxis, Range1d, ColumnDataSource, BoxAnnotation, CustomJS
+from bokeh.layouts import column
 
 def plot_interval_analysis(df, intervals, filename):
     """Create interval analysis plots."""
@@ -333,14 +336,18 @@ def plot_hiit_detection(df, hiit_start, hiit_end, intervals, frequency_info=None
     # Configure dual y-axes
     fig.update_layout(
         yaxis=dict(
-            title="Speed (m/s)",
-            titlefont=dict(color=get_field_color('enhanced_speed')),
+            title=dict(
+                text="Speed (m/s)",
+                font=dict(color=get_field_color('enhanced_speed'))
+            ),
             tickfont=dict(color=get_field_color('enhanced_speed')),
             side='left'
         ),
         yaxis2=dict(
-            title="Heart Rate (bpm)",
-            titlefont=dict(color=get_field_color('heart_rate')),
+            title=dict(
+                text="Heart Rate (bpm)",
+                font=dict(color=get_field_color('heart_rate'))
+            ),
             tickfont=dict(color=get_field_color('heart_rate')),
             side='right',
             overlaying='y',
@@ -409,14 +416,18 @@ def plot_frequency_correlation(df, frequency_info):
     # Configure dual y-axes
     fig.update_layout(
         yaxis=dict(
-            title="Frequency Correlation",
-            titlefont=dict(color='#44FFFF'),
+            title=dict(
+                text="Frequency Correlation",
+                font=dict(color='#44FFFF')
+            ),
             tickfont=dict(color='#44FFFF'),
             side='left'
         ),
         yaxis2=dict(
-            title="Template Correlation",
-            titlefont=dict(color='#FF00FF'),
+            title=dict(
+                text="Template Correlation",
+                font=dict(color='#FF00FF')
+            ),
             tickfont=dict(color='#FF00FF'),
             side='right',
             overlaying='y',
@@ -957,236 +968,363 @@ def plot_raw_data_overview(df, filename=None):
 # Alias for compatibility with UI imports
 create_detection_figure = plot_hiit_detection
 
-def plot_hiit_detection_altair(df, hiit_start, hiit_end, intervals, frequency_info=None, filename=None):
-    """Primary detection figure using Altair with interactive features."""
-    # Prepare data for Altair
-    plot_data = []
+def plot_hiit_detection_bokeh(df, hiit_start, hiit_end, intervals, frequency_info=None, filename=None, user_selection=None):
+    """
+    Create a Bokeh figure for HIIT detection with dual y-axes and interactive window selection.
+    Returns (bokeh_layout, selection_range)
+    """
+    # Prepare data
+    time = df.index
+    speed = df['enhanced_speed'] if 'enhanced_speed' in df.columns else None
+    hr = df['heart_rate'] if 'heart_rate' in df.columns else None
     
-    # Add speed data
-    if 'enhanced_speed' in df.columns:
-        from scipy.signal import medfilt
-        speed_median_filtered = medfilt(df['enhanced_speed'].values, kernel_size=45)
-        speed_median_series = pd.Series(speed_median_filtered, index=df.index)
-        
-        # Raw speed
-        speed_raw_df = pd.DataFrame({
-            'time': df.index,
-            'value': speed_median_series,
-            'type': 'Speed (Raw)',
-            'field': 'speed'
-        })
-        plot_data.append(speed_raw_df)
-        
-        # Smoothed speed
-        window_size = 5
-        speed_smoothed = speed_median_series.rolling(window=window_size, center=True).mean().ffill().bfill()
-        speed_smooth_df = pd.DataFrame({
-            'time': df.index,
-            'value': speed_smoothed,
-            'type': 'Speed (Smoothed)',
-            'field': 'speed'
-        })
-        plot_data.append(speed_smooth_df)
-    
-    # Add heart rate data
-    if 'heart_rate' in df.columns:
-        # Raw heart rate
-        hr_raw_df = pd.DataFrame({
-            'time': df.index,
-            'value': df['heart_rate'],
-            'type': 'Heart Rate (Raw)',
-            'field': 'heart_rate'
-        })
-        plot_data.append(hr_raw_df)
-        
-        # Filtered heart rate
-        if frequency_info and 'hr_filtered' in frequency_info:
-            hr_filtered_df = pd.DataFrame({
-                'time': df.index,
-                'value': frequency_info['hr_filtered'],
-                'type': 'Heart Rate (Filtered)',
-                'field': 'heart_rate'
-            })
-            plot_data.append(hr_filtered_df)
-    
-    # Combine all data
-    if not plot_data:
-        return None
-    
-    combined_df = pd.concat(plot_data, ignore_index=True)
-    
-    # Create base chart
-    base = alt.Chart(combined_df).encode(
-        x=alt.X('time:T', title='Time', scale=alt.Scale(domain=[df.index.min(), df.index.max()])),
-        y=alt.Y('value:Q', title='Value'),
-        color=alt.Color('type:N', title='Signal Type'),
-        tooltip=[
-            alt.Tooltip('time:T', title='Time', format='%Y-%m-%d %H:%M:%S'),
-            alt.Tooltip('value:Q', title='Value', format='.2f'),
-            alt.Tooltip('type:N', title='Type')
-        ]
-    ).properties(
-        width=800,
-        height=400,
-        title=f"HIIT Detection - {os.path.basename(filename) if filename else 'Data'}"
+    source = ColumnDataSource(data={
+        'time': time,
+        'speed': speed,
+        'hr': hr
+    })
+
+    # Main plot
+    p = figure(
+        width=900, height=350, x_axis_type='datetime',
+        title="HIIT Detection (Bokeh)",
+        tools="xpan,xwheel_zoom,reset",
+        active_drag="xpan"
     )
-    
-    # Create line chart
-    chart = base.mark_line().encode(
-        strokeWidth=alt.condition(
-            (alt.datum.type == 'Speed (Smoothed)') | (alt.datum.type == 'Heart Rate (Filtered)'),
-            alt.value(2),
-            alt.value(1)
-        ),
-        opacity=alt.condition(
-            (alt.datum.type == 'Speed (Raw)') | (alt.datum.type == 'Heart Rate (Raw)'),
-            alt.value(0.7),
-            alt.value(1)
-        )
-    )
-    
-    # Add HIIT window overlay
+    p.xaxis.axis_label = 'Time'
+    p.yaxis.axis_label = 'Speed (m/s)'
+    p.y_range = Range1d(start=speed.min() if speed is not None else 0, end=speed.max() if speed is not None else 1)
+
+    # Speed line (left y-axis)
+    if speed is not None:
+        p.line('time', 'speed', source=source, color='orange', legend_label='Speed (m/s)', line_width=2)
+
+    # Heart rate line (right y-axis)
+    if hr is not None:
+        p.extra_y_ranges = {"hr": Range1d(start=hr.min(), end=hr.max())}
+        p.add_layout(LinearAxis(y_range_name="hr", axis_label="Heart Rate (bpm)"), 'right')
+        p.line('time', 'hr', source=source, color='red', legend_label='Heart Rate (bpm)', line_width=2, y_range_name="hr")
+
+    # HIIT window overlay (auto-detected)
     if hiit_start is not None and hiit_end is not None:
-        display_start = hiit_start
-        display_end = hiit_end
-        
-        # Use refined boundaries if available
-        if frequency_info and 'refined_start' in frequency_info and 'refined_end' in frequency_info:
-            if frequency_info['refined_start'] is not None and frequency_info['refined_end'] is not None:
-                display_start = frequency_info['refined_start']
-                display_end = frequency_info['refined_end']
-        
-        hiit_window_df = pd.DataFrame({
-            'start': [df.index[display_start]],
-            'end': [df.index[display_end-1]],
-            'type': ['HIIT Window']
-        })
-        
-        window_overlay = alt.Chart(hiit_window_df).mark_rect(
-            fill='#44FF44',
-            opacity=0.15
-        ).encode(
-            x=alt.X('start:T'),
-            x2=alt.X2('end:T'),
-            tooltip=[
-                alt.Tooltip('start:T', title='Start', format='%Y-%m-%d %H:%M:%S'),
-                alt.Tooltip('end:T', title='End', format='%Y-%m-%d %H:%M:%S'),
-                alt.Tooltip('type:N', title='Type')
-            ]
+        hiit_box = BoxAnnotation(
+            left=time[hiit_start], right=time[hiit_end-1],
+            fill_alpha=0.1, fill_color='green', line_color='green', line_alpha=0.5
         )
-        
-        # Add window boundary lines
-        boundary_df = pd.DataFrame({
-            'time': [df.index[display_start], df.index[display_end-1]],
-            'boundary': ['Start', 'End']
-        })
-        
-        boundary_lines = alt.Chart(boundary_df).mark_rule(
-            color='#44FF44',
-            strokeDash=[5, 5],
-            strokeWidth=2
-        ).encode(
-            x=alt.X('time:T'),
-            tooltip=[
-                alt.Tooltip('time:T', title='Time', format='%Y-%m-%d %H:%M:%S'),
-                alt.Tooltip('boundary:N', title='Boundary')
-            ]
+        p.add_layout(hiit_box)
+
+    # User selection overlay
+    selection_range = None
+    if user_selection is not None:
+        sel_start, sel_end = user_selection
+        selection_range = (time[sel_start], time[sel_end-1])
+        user_box = BoxAnnotation(
+            left=selection_range[0], right=selection_range[1],
+            fill_alpha=0.2, fill_color='orange', line_color='orange', line_alpha=0.8
         )
-        
-        chart = alt.layer(chart, window_overlay, boundary_lines)
+        p.add_layout(user_box)
+
+    # RangeTool for selection
+    select = figure(
+        width=900, height=80, y_range=p.y_range, x_axis_type="datetime",
+        tools="", toolbar_location=None
+    )
+    select.line('time', 'speed', source=source, color='orange')
+    range_tool = RangeTool(x_range=p.x_range)
+    range_tool.overlay.fill_color = "orange"
+    range_tool.overlay.fill_alpha = 0.2
+    select.add_tools(range_tool)
+    select.ygrid.grid_line_color = None
+    select.xaxis.axis_label = 'Time (select HIIT window below)'
+
+    # Add JS callback to emit selection
+    range_tool.js_on_change('x_range', CustomJS(code="""
+        if (cb_obj.x_range) {
+            const start = cb_obj.x_range.start;
+            const end = cb_obj.x_range.end;
+            document.dispatchEvent(new CustomEvent("HIIT_RANGE", {detail: {start: start, end: end}}));
+        }
+    """))
+
+    layout = column(p, select)
+    return layout, range_tool
+
+def plot_hiit_detection_plotly_with_js(df, hiit_start, hiit_end, intervals, frequency_info=None, filename=None):
+    """
+    Create Plotly HIIT detection plot with selection bounds displayed in Streamlit UI.
+    Uses streamlit-plotly-events to capture selection events.
+    """
+    # Create the main figure
+    fig = go.Figure()
+    
+    # Add heart rate trace (left y-axis)
+    fig.add_trace(go.Scatter(
+        x=df.index,
+        y=df['heart_rate'],
+        name='Heart Rate',
+        yaxis='y',
+        line=dict(color='red', width=2),
+        hovertemplate='Time: %{x}<br>HR: %{y:.1f} bpm<extra></extra>'
+    ))
+    
+    # Add speed trace (right y-axis)
+    fig.add_trace(go.Scatter(
+        x=df.index,
+        y=df['speed'],
+        name='Speed',
+        yaxis='y2',
+        line=dict(color='blue', width=2),
+        hovertemplate='Time: %{x}<br>Speed: %{y:.2f} m/s<extra></extra>'
+    ))
+    
+    # Add HIIT boundaries
+    if hiit_start is not None and hiit_end is not None:
+        fig.add_vline(x=df.index[hiit_start], line_dash="dash", line_color="red", 
+                      annotation_text="Auto Start", annotation_position="top right")
+        fig.add_vline(x=df.index[hiit_end], line_dash="dash", line_color="red", 
+                      annotation_text="Auto End", annotation_position="top right")
     
     # Add interval overlays
     if intervals:
-        interval_data = []
-        for interval in intervals:
-            if 'high_start' in interval and 'high_end' in interval:
-                high_start = df.index[interval['high_start']] if interval['high_start'] < len(df) else df.index[-1]
-                high_end = df.index[interval['high_end']-1] if interval['high_end']-1 < len(df) else df.index[-1]
-                interval_data.append({
-                    'start': high_start,
-                    'end': high_end,
-                    'type': 'High Intensity',
-                    'interval': interval.get('interval_num', 0)
-                })
-            
-            if 'recovery_start' in interval and 'recovery_end' in interval:
-                rec_start = df.index[interval['recovery_start']] if interval['recovery_start'] < len(df) else df.index[-1]
-                rec_end = df.index[interval['recovery_end']-1] if interval['recovery_end']-1 < len(df) else df.index[-1]
-                interval_data.append({
-                    'start': rec_start,
-                    'end': rec_end,
-                    'type': 'Recovery',
-                    'interval': interval.get('interval_num', 0)
-                })
+        colors = ['rgba(255,0,0,0.2)', 'rgba(0,255,0,0.2)', 'rgba(0,0,255,0.2)', 
+                 'rgba(255,255,0,0.2)', 'rgba(255,0,255,0.2)']
         
-        if interval_data:
-            interval_df = pd.DataFrame(interval_data)
+        for i, interval in enumerate(intervals):
+            color = colors[i % len(colors)]
+            start_idx = interval['high_start']
+            end_idx = interval['high_end']
             
-            # High intensity intervals
-            high_intervals = interval_df[interval_df['type'] == 'High Intensity']
-            if not high_intervals.empty:
-                high_overlay = alt.Chart(high_intervals).mark_rect(
-                    fill='#FF8800',
-                    opacity=0.2
-                ).encode(
-                    x=alt.X('start:T'),
-                    x2=alt.X2('end:T'),
-                    tooltip=[
-                        alt.Tooltip('start:T', title='Start', format='%Y-%m-%d %H:%M:%S'),
-                        alt.Tooltip('end:T', title='End', format='%Y-%m-%d %H:%M:%S'),
-                        alt.Tooltip('type:N', title='Type'),
-                        alt.Tooltip('interval:Q', title='Interval #')
-                    ]
+            if start_idx < len(df) and end_idx < len(df):
+                fig.add_vrect(
+                    x0=df.index[start_idx],
+                    x1=df.index[end_idx],
+                    fillcolor=color,
+                    layer="below",
+                    line_width=0,
+                    annotation_text=f"Interval {i+1}",
+                    annotation_position="top left"
                 )
-                chart = alt.layer(chart, high_overlay)
-            
-            # Recovery intervals
-            recovery_intervals = interval_df[interval_df['type'] == 'Recovery']
-            if not recovery_intervals.empty:
-                recovery_overlay = alt.Chart(recovery_intervals).mark_rect(
-                    fill='#FF4444',
-                    opacity=0.1
-                ).encode(
-                    x=alt.X('start:T'),
-                    x2=alt.X2('end:T'),
-                    tooltip=[
-                        alt.Tooltip('start:T', title='Start', format='%Y-%m-%d %H:%M:%S'),
-                        alt.Tooltip('end:T', title='End', format='%Y-%m-%d %H:%M:%S'),
-                        alt.Tooltip('type:N', title='Type'),
-                        alt.Tooltip('interval:Q', title='Interval #')
-                    ]
-                )
-                chart = alt.layer(chart, recovery_overlay)
     
-    # Add selection for interactive boundary selection
-    selection = alt.selection_interval(encodings=['x'], name='boundary_selection')
-    
-    # Add click points for boundary selection
-    click_points = alt.Chart(combined_df).mark_circle(
-        size=50,
-        opacity=0
-    ).encode(
-        x=alt.X('time:T'),
-        y=alt.Y('value:Q'),
-        tooltip=[
-            alt.Tooltip('time:T', title='Time', format='%Y-%m-%d %H:%M:%S'),
-            alt.Tooltip('value:Q', title='Value', format='.2f')
-        ]
-    ).add_selection(selection)
-    
-    # Combine all layers
-    final_chart = alt.layer(chart, click_points).configure_axis(
-        gridColor='#333333',
-        domainColor='#666666',
-        tickColor='#666666',
-        labelColor='#CCCCCC'
-    ).configure_view(
-        strokeColor='#333333'
-    ).configure_title(
-        color='#FFFFFF'
-    ).configure_legend(
-        titleColor='#FFFFFF',
-        labelColor='#CCCCCC'
+    # Layout with dual y-axes
+    fig.update_layout(
+        title=f"Primary HIIT Detection (Plotly) - {filename}",
+        xaxis_title="Time",
+        yaxis=dict(
+            title="Heart Rate (bpm)",
+            side="left",
+            titlefont=dict(color="red"),
+            tickfont=dict(color="red")
+        ),
+        yaxis2=dict(
+            title="Speed (m/s)",
+            side="right",
+            overlaying="y",
+            titlefont=dict(color="blue"),
+            tickfont=dict(color="blue")
+        ),
+        dragmode='select',
+        selectdirection='h',
+        height=600,
+        template="plotly_dark",
+        showlegend=True,
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1
+        )
     )
     
-    return final_chart
+    return fig
+
+def plot_hiit_detection_plotly_js_injection(df, hiit_start, hiit_end, intervals, frequency_info=None, filename=None):
+    """
+    Create Plotly HIIT detection plot with custom JavaScript injection
+    that displays real-time selection bounds in a floating div.
+    """
+    import streamlit.components.v1 as components
+    
+    # Create the main figure
+    fig = go.Figure()
+    
+    # Add heart rate trace (left y-axis)
+    fig.add_trace(go.Scatter(
+        x=df.index,
+        y=df['heart_rate'],
+        name='Heart Rate',
+        yaxis='y',
+        line=dict(color='red', width=2),
+        hovertemplate='Time: %{x}<br>HR: %{y:.1f} bpm<extra></extra>'
+    ))
+    
+    # Add speed trace (right y-axis)
+    fig.add_trace(go.Scatter(
+        x=df.index,
+        y=df['speed'],
+        name='Speed',
+        yaxis='y2',
+        line=dict(color='blue', width=2),
+        hovertemplate='Time: %{x}<br>Speed: %{y:.2f} m/s<extra></extra>'
+    ))
+    
+    # Add HIIT boundaries
+    if hiit_start is not None and hiit_end is not None:
+        fig.add_vline(x=df.index[hiit_start], line_dash="dash", line_color="red", 
+                      annotation_text="Auto Start", annotation_position="top right")
+        fig.add_vline(x=df.index[hiit_end], line_dash="dash", line_color="red", 
+                      annotation_text="Auto End", annotation_position="top right")
+    
+    # Add interval overlays
+    if intervals:
+        colors = ['rgba(255,0,0,0.2)', 'rgba(0,255,0,0.2)', 'rgba(0,0,255,0.2)', 
+                 'rgba(255,255,0,0.2)', 'rgba(255,0,255,0.2)']
+        
+        for i, interval in enumerate(intervals):
+            color = colors[i % len(colors)]
+            start_idx = interval['high_start']
+            end_idx = interval['high_end']
+            
+            if start_idx < len(df) and end_idx < len(df):
+                fig.add_vrect(
+                    x0=df.index[start_idx],
+                    x1=df.index[end_idx],
+                    fillcolor=color,
+                    layer="below",
+                    line_width=0,
+                    annotation_text=f"Interval {i+1}",
+                    annotation_position="top left"
+                )
+    
+    # Layout with dual y-axes
+    fig.update_layout(
+        title=f"Primary HIIT Detection (Plotly JS) - {filename}",
+        xaxis_title="Time",
+        yaxis=dict(
+            title="Heart Rate (bpm)",
+            side="left",
+            titlefont=dict(color="red"),
+            tickfont=dict(color="red")
+        ),
+        yaxis2=dict(
+            title="Speed (m/s)",
+            side="right",
+            overlaying="y",
+            titlefont=dict(color="blue"),
+            tickfont=dict(color="blue")
+        ),
+        dragmode='select',
+        selectdirection='h',
+        height=600,
+        template="plotly_dark",
+        showlegend=True,
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1
+        )
+    )
+    
+    # Custom JavaScript for real-time selection display
+    js_code = """
+    <script>
+    // Create a div to display selection bounds
+    const boundsDiv = document.createElement('div');
+    boundsDiv.id = 'selection-bounds';
+    boundsDiv.style.cssText = `
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        background: rgba(0, 0, 0, 0.9);
+        color: white;
+        padding: 15px;
+        border-radius: 8px;
+        font-family: 'Courier New', monospace;
+        font-size: 14px;
+        z-index: 10000;
+        border: 2px solid #666;
+        min-width: 250px;
+        box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+    `;
+    boundsDiv.innerHTML = '<strong>🎯 Selection Bounds</strong><br>No selection';
+    document.body.appendChild(boundsDiv);
+    
+    // Function to update bounds display
+    function updateBoundsDisplay(selection) {
+        if (selection && selection.range && selection.range.x) {
+            const xRange = selection.range.x;
+            const yRange = selection.range.y;
+            
+            const startTime = new Date(xRange[0]).toLocaleTimeString();
+            const endTime = new Date(xRange[1]).toLocaleTimeString();
+            const duration = ((xRange[1] - xRange[0]) / 1000).toFixed(1);
+            
+            let boundsText = '<strong>🎯 Selection Bounds</strong><br>';
+            boundsText += `⏰ X: ${startTime} → ${endTime}<br>`;
+            boundsText += `⏱️ Duration: ${duration}s<br>`;
+            
+            if (yRange) {
+                boundsText += `📊 Y: ${yRange[0].toFixed(1)} → ${yRange[1].toFixed(1)}<br>`;
+                boundsText += `📈 Range: ${(yRange[1] - yRange[0]).toFixed(1)}`;
+            }
+            
+            boundsDiv.innerHTML = boundsText;
+            boundsDiv.style.background = 'rgba(0, 255, 0, 0.9)';
+            boundsDiv.style.borderColor = '#00ff00';
+        } else {
+            boundsDiv.innerHTML = '<strong>🎯 Selection Bounds</strong><br>No selection';
+            boundsDiv.style.background = 'rgba(0, 0, 0, 0.9)';
+            boundsDiv.style.borderColor = '#666';
+        }
+    }
+    
+    // Wait for Plotly to load and attach event listeners
+    function attachPlotlyListeners() {
+        const plotDiv = document.querySelector('.plotly-graph-div');
+        if (plotDiv) {
+            // Listen for selection events
+            plotDiv.on('plotly_selected', function(eventData) {
+                console.log('Selection event:', eventData);
+                updateBoundsDisplay(eventData);
+            });
+            
+            // Listen for deselection events
+            plotDiv.on('plotly_deselect', function(eventData) {
+                console.log('Deselection event:', eventData);
+                updateBoundsDisplay(null);
+            });
+            
+            console.log('✅ Plotly event listeners attached successfully');
+        } else {
+            console.log('⏳ Plotly div not found, retrying...');
+            setTimeout(attachPlotlyListeners, 500);
+        }
+    }
+    
+    // Start listening for Plotly
+    setTimeout(attachPlotlyListeners, 1000);
+    </script>
+    """
+    
+    # Create the HTML component with Plotly and custom JavaScript
+    plotly_html = f"""
+    <div id="plotly-container">
+        {js_code}
+    </div>
+    <script>
+        // Render the Plotly figure
+        const plotData = {fig.to_json()};
+        Plotly.newPlot('plotly-container', plotData.data, plotData.layout, {{
+            displayModeBar: true,
+            modeBarButtonsToRemove: ['pan2d', 'lasso2d'],
+            displaylogo: false
+        }});
+    </script>
+    """
+    
+    # Display using Streamlit components
+    components.html(plotly_html, height=650)
+    
+    return fig

@@ -4,12 +4,15 @@ import os
 import json
 from datetime import datetime
 import glob
-from hiit.data_io import load_fit_file, load_manual_window_settings, save_manual_window_settings
+from hiit.data_io import load_fit_file, load_manual_window_settings, save_manual_window_settings, clear_manual_window_settings
 from hiit.detection import detect_hiit_period_frequency, segment_intervals_speed_edges
 from hiit.plotting import (
     plot_hiit_detection,
-    plot_hiit_detection_altair,
+    plot_hiit_detection_bokeh,
+    plot_hiit_detection_plotly_with_js,
+    plot_hiit_detection_plotly_js_injection,
     plot_frequency_correlation,
+    create_metrics_visualization,
     plot_frequency_analysis,
     plot_period_power_spectrum,
     plot_interval_analysis,
@@ -22,6 +25,8 @@ from hiit.plotting import (
 )
 from hiit.metrics import calculate_interval_metrics, calculate_performance_metrics
 from hiit.utils import get_field_group, get_field_color
+from streamlit_bokeh_events import streamlit_bokeh_events
+
 
 def main():
     st.set_page_config(layout="wide")
@@ -30,7 +35,8 @@ def main():
     pages = [
         ("Raw Data Analysis", "raw"),
         ("Interval Analysis", "interval"),
-        ("Performance Metrics", "metrics")
+        ("Performance Metrics", "metrics"),
+        ("Plotly JS Demo", "plotly_js")
     ]
     
     # Create tab-like navigation with URL parameters
@@ -41,16 +47,16 @@ def main():
         # Get current page from URL parameters or session state
         url_page = st.query_params.get("page", None)
         
-        if url_page and url_page in ["raw", "interval", "metrics"]:
+        if url_page and url_page in ["raw", "interval", "metrics", "plotly_js"]:
             selected_page = url_page
             st.session_state["selected_page"] = selected_page
         else:
             selected_page = st.session_state.get("selected_page", "raw")
         
-        # Create tab buttons in a row
-        tab_cols = st.columns(3)
-        for i, (name, slug) in enumerate(pages):
-            with tab_cols[i]:
+            # Create tab buttons in a row
+    tab_cols = st.columns(4)
+    for i, (name, slug) in enumerate(pages):
+        with tab_cols[i]:
                 button_type = "primary" if selected_page == slug else "secondary"
                 if st.button(name, key=f"nav_{slug}", type=button_type):
                     st.session_state["selected_page"] = slug
@@ -69,6 +75,8 @@ def main():
         show_interval_analysis_page(url_file)
     elif selected_page == "metrics":
         show_metrics_page()
+    elif selected_page == "plotly_js":
+        show_plotly_js_page()
 
 def show_raw_data_page(filename):
     st.header("📊 Raw Data Analysis")
@@ -262,7 +270,11 @@ def show_interval_analysis_page(filename):
     
     # Run detection with manual threshold if available
     manual_threshold = load_correlation_threshold(filename)
-    hiit_start, hiit_end, frequency_info = detect_hiit_period_frequency(df, manual_threshold=manual_threshold)
+    result = detect_hiit_period_frequency(df, manual_threshold=manual_threshold)
+    if result[0] is not None:
+        hiit_start, hiit_end, frequency_info = result
+    else:
+        hiit_start, hiit_end, frequency_info = None, None, {}
     
     # Show threshold-based window if we have frequency info and update window if needed
     if frequency_info and 'regions_above_threshold' in frequency_info and 'correlation_threshold' in frequency_info:
@@ -366,55 +378,48 @@ def show_interval_analysis_page(filename):
     # Create multiple figures for better organization
     # Always show all figures, even if no intervals detected
     
-    # Figure 1: Primary detection figure using Altair (interactive)
-    st.subheader("🎯 Interactive HIIT Detection (Altair)")
-    fig_altair = plot_hiit_detection_altair(df, hiit_start, hiit_end, intervals, frequency_info, filename)
-    if fig_altair:
-        st.altair_chart(fig_altair, use_container_width=True)
-        st.info("💡 **Interactive Features**: Click and drag to select regions, hover for details. This will be enhanced with boundary selection soon!")
-    
-    # Figure 2: Primary detection figure (speed, heart rate, intervals, HIIT window) - Plotly version
+    # Figure 1: Primary detection figure (speed, heart rate, intervals, HIIT window) - Plotly version
     st.subheader("📊 Primary HIIT Detection (Plotly)")
     fig_main = plot_hiit_detection(df, hiit_start, hiit_end, intervals, frequency_info, filename)
     st.plotly_chart(fig_main, use_container_width=True)
     
-    # Figure 3: Frequency correlation analysis
+    # Figure 2: Frequency correlation analysis
     if frequency_info:
         st.subheader("🔍 Frequency & Template Correlation Analysis")
         fig_corr = plot_frequency_correlation(df, frequency_info)
         if fig_corr:
             st.plotly_chart(fig_corr, use_container_width=True)
     
-    # Figure 4: Frequency spectrum analysis
+    # Figure 3: Frequency spectrum analysis
     if frequency_info:
         st.subheader("📈 Frequency Spectrum Analysis")
         fig_freq = plot_frequency_analysis(frequency_info)
         if fig_freq:
             st.plotly_chart(fig_freq, use_container_width=True)
     
-    # Figure 5: Period power spectrum
+    # Figure 4: Period power spectrum
     if frequency_info:
         st.subheader("⚡ Period Power Spectrum")
         fig_period = plot_period_power_spectrum(frequency_info)
         if fig_period:
             st.plotly_chart(fig_period, use_container_width=True)
     
-    # Figure 6: Interval overlay with exponential fits
+    # Figure 5: Interval overlay with exponential fits
     st.subheader("🔄 Interval Overlay with Exponential Fits")
     fig2 = create_interval_overlay_figure(df, intervals, frequency_info)
     st.plotly_chart(fig2, use_container_width=True)
     
-    # Figure 7: Speed statistics
+    # Figure 6: Speed statistics
     st.subheader("🏃 Speed Statistics by Interval")
     fig3 = create_speed_stats_figure(df, intervals)
     st.plotly_chart(fig3, use_container_width=True)
     
-    # Figure 8: Performance metrics distributions
+    # Figure 7: Performance metrics distributions
     st.subheader("📈 Performance Metrics Distributions")
     fig4 = create_metrics_distributions_figure(df, intervals)
     st.plotly_chart(fig4, use_container_width=True)
     
-    # Figure 9: Top-level metrics (responsiveness and speed variability)
+    # Figure 8: Top-level metrics (responsiveness and speed variability)
     st.subheader("🎯 Top-Level Performance Metrics")
     fig5 = create_top_level_metrics_figure(df, intervals)
     st.plotly_chart(fig5, use_container_width=True)
@@ -439,6 +444,57 @@ def show_interval_analysis_page(filename):
         empty_df = pd.DataFrame(columns=['Interval', 'High Start', 'High End', 'Recovery Start', 'Recovery End'])
         st.dataframe(empty_df, use_container_width=True)
 
+    # --- Bokeh Interactive HIIT Detection ---
+    st.subheader("🎯 Interactive HIIT Detection (Bokeh)")
+    if 'bokeh_selection' not in st.session_state:
+        st.session_state['bokeh_selection'] = None
+    
+    # Show Bokeh chart and get selection
+    bokeh_fig, _ = plot_hiit_detection_bokeh(
+        df, hiit_start, hiit_end, intervals, frequency_info, filename, st.session_state['bokeh_selection']
+    )
+    result = streamlit_bokeh_events(
+        bokeh_fig,
+        events="HIIT_RANGE",
+        key="bokeh_hiit_range"
+    )
+    # If user made a selection, update session state
+    if result and "HIIT_RANGE" in result:
+        start = result["HIIT_RANGE"]["start"]
+        end = result["HIIT_RANGE"]["end"]
+        # Find closest indices in df.index
+        start_idx = df.index.get_indexer([pd.to_datetime(start, unit='ms')], method='nearest')[0]
+        end_idx = df.index.get_indexer([pd.to_datetime(end, unit='ms')], method='nearest')[0]
+        if start_idx < end_idx:
+            st.session_state['bokeh_selection'] = (start_idx, end_idx)
+    
+    # Display current selection info
+    st.subheader("📏 Selected HIIT Window")
+    if st.session_state['bokeh_selection']:
+        sel_start, sel_end = st.session_state['bokeh_selection']
+        st.write(f"Start: {df.index[sel_start]}")
+        st.write(f"End: {df.index[sel_end-1]}")
+        st.write(f"Duration: {sel_end - sel_start} samples")
+    else:
+        st.write("No user selection.")
+    
+    # Save/Clear buttons
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("💾 Save User Selection as Manual (Bokeh)"):
+            if st.session_state['bokeh_selection']:
+                sel_start, sel_end = st.session_state['bokeh_selection']
+                save_manual_window_settings(filename, sel_start, sel_end)
+                st.success("✅ User selection saved as manual boundary!")
+                st.rerun()
+            else:
+                st.warning("⚠️ No user selection to save")
+    with col2:
+        if st.button("🔄 Clear User Selection (Bokeh)"):
+            st.session_state['bokeh_selection'] = None
+            st.success("✅ User selection cleared!")
+            st.rerun()
+
 def show_metrics_page():
     st.header("📈 Performance Metrics")
     
@@ -458,7 +514,11 @@ def show_metrics_page():
             continue
         
         # Run detection
-        hiit_start, hiit_end, frequency_info = detect_hiit_period_frequency(df)
+        result = detect_hiit_period_frequency(df)
+        if result[0] is not None:
+            hiit_start, hiit_end, frequency_info = result
+        else:
+            hiit_start, hiit_end, frequency_info = None, None, {}
         
         if hiit_start is not None and hiit_end is not None:
             df_hiit = df.iloc[hiit_start:hiit_end]
@@ -527,3 +587,91 @@ def clear_correlation_threshold(filename):
         os.remove(settings_file)
     except FileNotFoundError:
         pass
+
+def show_plotly_js_page():
+    st.header("📊 Plotly JS Demo - Real-time Selection Bounds")
+    
+    st.markdown("""
+    This demo shows a Plotly figure with custom JavaScript injection that displays 
+    real-time selection bounds in the top-right corner of the screen.
+    
+    **Instructions:**
+    1. Use the selection tool (box icon) in the toolbar
+    2. Click and drag to select a region on the plot
+    3. Watch the selection bounds update in real-time in the top-right corner
+    4. The bounds show X-axis (time) and Y-axis (values) ranges
+    """)
+    
+    # Load sample data
+    filename = st.selectbox(
+        "Select a FIT file to analyze:",
+        [f for f in glob.glob("data/*.fit") if os.path.isfile(f)],
+        key="plotly_js_file"
+    )
+    
+    if filename:
+        try:
+            # Load and process data
+            df = load_fit_file(filename)
+            
+            if df is not None and not df.empty:
+                # Detect HIIT periods
+                result = detect_hiit_period_frequency(df)
+                if result[0] is not None:
+                    hiit_start, hiit_end, frequency_info = result
+                else:
+                    hiit_start, hiit_end, frequency_info = None, None, {}
+                
+                # Segment intervals
+                intervals = segment_intervals_speed_edges(df.iloc[hiit_start:hiit_end]) if hiit_start is not None and hiit_end is not None else []
+                
+                # Get frequency info (detect_hiit_period_frequency already returns this)
+                frequency_info = None
+                
+                st.success(f"✅ Loaded {filename} with {len(df)} data points")
+                
+                # Show the Plotly JS demo with JavaScript injection
+                st.subheader("Interactive Plot with Real-time Selection Bounds (JavaScript Injection)")
+                
+                st.info("""
+                **🎯 JavaScript Injection Demo:**
+                
+                This example uses custom JavaScript injection to display real-time selection bounds
+                in a floating div in the top-right corner of the screen.
+                
+                **Instructions:**
+                1. **Use the selection tool** (box icon) in the plot toolbar
+                2. **Click and drag** to select a region on the plot
+                3. **Watch the bounds update in real-time** in the floating div
+                4. **The div shows X-axis (time) and Y-axis bounds** with duration
+                
+                **Features:**
+                - Real-time bounds display in floating div
+                - Visual feedback (green when active, black when inactive)
+                - Time formatting and duration calculation
+                - Y-axis range calculation
+                """)
+                
+                # Create the plot with JavaScript injection
+                plot_hiit_detection_plotly_js_injection(
+                    df, hiit_start, hiit_end, intervals, frequency_info, 
+                    os.path.basename(filename)
+                )
+                
+                st.markdown("""
+                **Features:**
+                - Dual y-axes for heart rate (red) and speed (blue)
+                - Auto-detected HIIT boundaries (red dashed lines)
+                - Interval overlays (colored rectangles)
+                - Real-time selection bounds display
+                - Interactive zoom, pan, and selection tools
+                """)
+                
+            else:
+                st.error("❌ Failed to load data from the selected file.")
+                
+        except Exception as e:
+            st.error(f"❌ Error processing file: {str(e)}")
+            st.exception(e)
+    else:
+        st.info("👆 Please select a FIT file to analyze.")

@@ -28,6 +28,14 @@ def save_manual_window_settings(filename, start_idx, end_idx):
     with open(settings_file, 'w') as f:
         json.dump(settings, f, indent=2)
 
+def clear_manual_window_settings(filename):
+    """Clear manual window settings file."""
+    settings_file = get_manual_window_settings_filename(filename)
+    try:
+        os.remove(settings_file)
+    except FileNotFoundError:
+        pass
+
 def load_fit_data(fit_filename):
     """Load and parse FIT file data."""
     fitfile = FitFile(fit_filename)

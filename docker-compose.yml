@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  hiit-analyzer-dash:
+    build: .
+    ports:
+      - "8050:8050"
+    volumes:
+      - ./data:/app/data
+      - ./settings:/app/settings
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+
+  hiit-analyzer-streamlit:
+    build: .
+    command: ["streamlit", "run", "app.py", "--server.address", "0.0.0.0", "--server.port", "8501"]
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./data:/app/data
+      - ./settings:/app/settings
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped

@@ -946,4 +946,4 @@ def handle_threshold_buttons(save_clicks, clear_clicks, threshold_value, filenam
     return threshold_value
 
 if __name__ == '__main__':
-    app.run_server(debug=True, host='0.0.0.0', port=8050)
+    app.run(debug=True, host='0.0.0.0', port=8050)

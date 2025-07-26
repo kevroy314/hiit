@@ -2,7 +2,22 @@ import os
 import json
 from datetime import datetime
 import pandas as pd
+import numpy as np
 from fitparse import FitFile
+
+
+class NumpyEncoder(json.JSONEncoder):
+    """JSON encoder that handles NumPy types."""
+    def default(self, obj):
+        if isinstance(obj, np.integer):
+            return int(obj)
+        elif isinstance(obj, np.floating):
+            return float(obj)
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        elif pd.isna(obj):
+            return None
+        return super().default(obj)
 
 def get_manual_window_settings_filename(filename):
     base_name = os.path.splitext(os.path.basename(filename))[0]
@@ -21,12 +36,12 @@ def save_manual_window_settings(filename, start_idx, end_idx):
     settings_file = get_manual_window_settings_filename(filename)
     os.makedirs(os.path.dirname(settings_file), exist_ok=True)
     settings = {
-        'manual_start': start_idx,
-        'manual_end': end_idx,
+        'manual_start': int(start_idx) if isinstance(start_idx, np.integer) else start_idx,
+        'manual_end': int(end_idx) if isinstance(end_idx, np.integer) else end_idx,
         'timestamp': datetime.now().isoformat()
     }
     with open(settings_file, 'w') as f:
-        json.dump(settings, f, indent=2)
+        json.dump(settings, f, indent=2, cls=NumpyEncoder)
 
 def clear_manual_window_settings(filename):
     """Clear manual window settings file."""
@@ -37,30 +52,39 @@ def clear_manual_window_settings(filename):
         pass
 
 def load_fit_data(fit_filename):
-    """Load and parse FIT file data."""
-    fitfile = FitFile(fit_filename)
-    timestamps = []
-    values = {}
-    all_field_names = set()
-    for record in fitfile.get_messages('record'):
-        for field in record:
-            if field.name != 'timestamp':
-                all_field_names.add(field.name)
-    for field_name in all_field_names:
-        values[field_name] = []
-    for record in fitfile.get_messages('record'):
-        record_data = {}
-        timestamp = None
-        for field in record:
-            record_data[field.name] = field.value
-            if field.name == 'timestamp':
-                timestamp = field.value
-        if timestamp:
-            timestamps.append(timestamp)
-            for field_name in all_field_names:
-                values[field_name].append(record_data.get(field_name, None))
-    df = pd.DataFrame(values, index=timestamps)
-    return df
+    """Load and parse FIT file data (supports both .fit and .csv files)."""
+    if fit_filename.endswith('.csv'):
+        # Load CSV file
+        df = pd.read_csv(fit_filename)
+        if 'timestamp' in df.columns:
+            df['timestamp'] = pd.to_datetime(df['timestamp'])
+            df.set_index('timestamp', inplace=True)
+        return df
+    else:
+        # Load FIT file
+        fitfile = FitFile(fit_filename)
+        timestamps = []
+        values = {}
+        all_field_names = set()
+        for record in fitfile.get_messages('record'):
+            for field in record:
+                if field.name != 'timestamp':
+                    all_field_names.add(field.name)
+        for field_name in all_field_names:
+            values[field_name] = []
+        for record in fitfile.get_messages('record'):
+            record_data = {}
+            timestamp = None
+            for field in record:
+                record_data[field.name] = field.value
+                if field.name == 'timestamp':
+                    timestamp = field.value
+            if timestamp:
+                timestamps.append(timestamp)
+                for field_name in all_field_names:
+                    values[field_name].append(record_data.get(field_name, None))
+        df = pd.DataFrame(values, index=timestamps)
+        return df
 
 # Alias for backward compatibility
 def load_fit_file(fit_filename):
@@ -83,12 +107,12 @@ def load_correlation_threshold(filename):
 def save_correlation_threshold(filename, threshold):
     settings_file = get_correlation_threshold_filename(filename)
     settings = {
-        'correlation_threshold': threshold,
+        'correlation_threshold': float(threshold) if isinstance(threshold, np.floating) else threshold,
         'timestamp': datetime.now().isoformat()
     }
     os.makedirs(os.path.dirname(settings_file), exist_ok=True)
     with open(settings_file, 'w') as f:
-        json.dump(settings, f, indent=2)
+        json.dump(settings, f, indent=2, cls=NumpyEncoder)
 
 def clear_correlation_threshold(filename):
     settings_file = get_correlation_threshold_filename(filename)

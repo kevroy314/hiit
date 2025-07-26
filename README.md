@@ -1,245 +1,108 @@
 # HIIT Analyzer
 
-A comprehensive application for analyzing High-Intensity Interval Training (HIIT) data from FIT files, including heart rate analysis, interval detection, and performance metrics.
+A sophisticated analysis tool for High-Intensity Interval Training (HIIT) workouts from FIT files, with advanced algorithms for automatic interval detection and performance metrics calculation.
 
-## Available Versions
+## Algorithm Overview
 
-This repository now includes two versions of the application:
+### HIIT Detection Algorithm
 
-1. **Original Streamlit Version** - `app.py`
-2. **New Dash Version** - `app_dash.py` (recommended)
+The application employs a multi-stage algorithm to automatically detect HIIT intervals from workout data:
 
-## Features
+#### 1. Signal Preprocessing
+- **Lowpass Filtering**: Applies a bandpass filter with a period range of 1-4 minutes to both speed and heart rate signals to remove high-frequency noise
+- **Speed Clipping**: Clips speed values below 1.34 m/s to focus on meaningful movement patterns
 
-- 📊 **Raw Data Analysis**: View and analyze time series data from FIT files
-- 🔄 **Interval Analysis**: Detect HIIT intervals with frequency analysis and correlation
-- 📈 **Performance Metrics**: Comprehensive performance analysis across multiple files
-- 🎯 **Interactive Visualizations**: Plotly-based charts with zoom, pan, and selection tools
-- ⚙️ **Manual Calibration**: Fine-tune detection parameters with threshold adjustment
-- 💾 **Settings Persistence**: Save and load custom thresholds and window settings
+#### 2. Frequency Analysis
+- **FFT Computation**: Performs Fast Fourier Transform on the enhanced speed signal
+- **Dominant Frequency Detection**: Identifies the primary oscillation frequency within the expected interval period range (10-300 seconds)
 
-## Quick Start - Dash Version (Recommended)
+#### 3. Interval Detection
+- **Edge Detection**: Uses gradient analysis to identify sharp rises in speed that indicate interval starts
+- **Clustering**: Applies DBSCAN clustering to group nearby edge detections and eliminate duplicates
+- **Boundary Refinement**: Determines work and recovery phases within each interval using speed thresholds
+
+#### 4. Template Correlation
+- **Template Generation**: Creates an average interval template from detected intervals
+- **Cross-Correlation**: Computes correlation between the template and the entire signal
+- **Combined Analysis**: Merges frequency and template correlations for improved accuracy
+
+#### 5. Heart Rate Refinement
+- **Recovery Detection**: Uses heart rate patterns to refine interval boundaries, especially for the final interval
+- **Threshold Calculation**: Computes median heart rate during recovery phases to establish baseline
+
+#### 6. Contiguity Verification
+- **Gap Analysis**: Ensures detected intervals are contiguous with configurable maximum gap threshold
+- **Outlier Removal**: Eliminates isolated intervals that don't fit the overall pattern
+
+#### 7. Metrics Calculation
+- **Exponential Fitting**: Fits exponential rise and fall models to heart rate data for each interval
+- **Tau Parameters**: Extracts time constants (tau up/down) characterizing cardiovascular response
+- **Performance Metrics**: Calculates duty cycle and median top-quartile speed for each interval
+
+### Performance Analysis
+
+The final visualization presents a scatter plot where:
+- **X-axis**: Tau (up or down) representing cardiovascular adaptation rate
+- **Y-axis**: Median speed during high-intensity phases
+- **Marker Size**: Duty cycle of the interval
+- **Color**: Session number with temporal progression
+- **Opacity**: Interval sequence within session
+
+## Local Deployment
 
 ### Prerequisites
+- Docker and Docker Compose
+- Python 3.7+ (for non-Docker deployment)
 
-- Python 3.7 or higher
-- FIT files in the `data/` directory
+### Quick Start with Docker
 
-### Installation
-
-1. **Clone the repository** (if you haven't already):
+1. Clone the repository
+2. Place your `.fit` files in the `data/` directory
+3. Run the application:
    ```bash
-   git clone <repository-url>
-   cd hiit-analyzer
+   docker-compose up --build
+   ```
+4. Access the application at `http://localhost:8050`
+
+### Manual Installation
+
+1. Create a virtual environment:
+   ```bash
+   python -m venv venv
+   source venv/bin/activate  # On Windows: venv\Scripts\activate
    ```
 
-2. **Install Dash dependencies**:
+2. Install dependencies:
    ```bash
-   pip install -r requirements_dash.txt
+   pip install -r requirements.txt
    ```
 
-3. **Ensure you have FIT files** in the `data/` directory:
+3. Start the application:
    ```bash
-   mkdir -p data
-   # Copy your .fit files to the data/ directory
+   ./start_server.sh  # On Windows: python -m src.app
    ```
 
-### Running the Dash Application
+### Configuration
 
-**Option 1: Direct Python execution**
-```bash
-python app_dash.py
-```
+Key parameters can be configured via the `.env` file:
+- `LOWPASS_PERIOD_MIN/MAX`: Filter cutoff periods
+- `SPEED_CLIP_THRESHOLD`: Minimum speed threshold
+- `INTERVAL_MIN_DURATION`: Minimum interval length
+- `INTERVAL_MAX_GAP`: Maximum gap between intervals
 
-**Option 2: Using convenience scripts**
-```bash
-# On Linux/macOS
-./run_dash.sh
+### Data Persistence
 
-# On Windows
-run_dash.bat
-```
+- **Input Data**: Place `.fit` files in the `data/` directory
+- **Settings**: User selections and cached results stored in `settings/`
+- Both directories are mounted as Docker volumes for persistence
 
-The application will start on `http://localhost:8050`
+## Usage
 
-### Docker Deployment (Recommended)
+1. **Raw Data Analysis**: View and explore workout data with time series plots
+2. **HIIT Interval Analysis**: 
+   - Automatic interval detection with visual feedback
+   - Interactive selection to manually adjust HIIT window
+   - Save/Reset functionality for manual adjustments
+3. **Performance Analysis**: Compare metrics across all workouts to track progress
 
-For easier deployment, you can use Docker:
-
-```bash
-# Build and run with docker-compose (runs both Dash and Streamlit versions)
-docker-compose up --build
-
-# Or run just the Dash version
-docker-compose up hiit-analyzer-dash
-
-# Or build and run manually
-docker build -t hiit-analyzer .
-docker run -p 8050:8050 -v $(pwd)/data:/app/data hiit-analyzer
-```
-
-### Features of the Dash Version
-
-- **Dark Theme**: Modern dark UI matching the original Streamlit theme
-- **Responsive Design**: Works well on desktop and mobile devices
-- **Interactive Navigation**: Tab-based navigation between different analysis modes
-- **Real-time Updates**: Automatic updates when selecting different files
-- **Preserved Functionality**: All original features and visualizations maintained
-
-## Alternative - Streamlit Version
-
-### Installation
-
-```bash
-pip install -r requirements.txt
-```
-
-### Running the Streamlit Application
-
-```bash
-streamlit run app.py
-```
-
-The application will start on `http://localhost:8501`
-
-## Usage Guide
-
-### 1. Raw Data Analysis
-- **Purpose**: Explore your FIT file data structure and basic metrics
-- **Features**:
-  - Total records, duration, and distance metrics
-  - Data field summary with statistics
-  - Time series plots grouped by data type (speeds, positions, altitudes, etc.)
-
-### 2. Interval Analysis
-- **Purpose**: Detect and analyze HIIT intervals in your training data
-- **Features**:
-  - Automatic HIIT period detection using frequency analysis
-  - Manual threshold calibration for fine-tuning detection sensitivity
-  - Multiple visualization types:
-    - Primary HIIT detection plot with heart rate and speed
-    - Frequency correlation analysis
-    - Period power spectrum
-    - Interval overlay with exponential fits
-    - Speed statistics by interval
-    - Performance metrics distributions
-
-### 3. Performance Metrics
-- **Purpose**: Compare performance across multiple training sessions
-- **Features**:
-  - Aggregated analysis across all FIT files
-  - Performance metrics visualization
-  - Summary statistics table
-
-### 4. Plotly JS Demo
-- **Purpose**: Demonstrate advanced interactive features
-- **Features**:
-  - Interactive selection tools
-  - Real-time bounds display
-  - Advanced plot interactions
-
-## Configuration
-
-### File Structure
-```
-hiit-analyzer/
-├── app.py                 # Original Streamlit app
-├── app_dash.py           # New Dash app
-├── requirements.txt      # Streamlit dependencies
-├── requirements_dash.txt # Dash dependencies
-├── data/                 # FIT files directory
-│   └── *.fit            # Your training files
-├── settings/             # App settings (auto-created)
-├── hiit/                 # Core analysis modules
-│   ├── __init__.py
-│   ├── data_io.py       # File I/O operations
-│   ├── detection.py     # HIIT detection algorithms
-│   ├── metrics.py       # Performance calculations
-│   ├── plotting.py      # Visualization functions
-│   ├── ui.py           # UI components (Streamlit)
-│   └── utils.py        # Utility functions
-└── README.md
-```
-
-### Supported File Formats
-- **FIT files** (`.fit`): Garmin and other fitness device files
-- Currently optimized for running/cycling activities with heart rate data
-
-### Manual Threshold Calibration
-The application allows you to manually adjust the correlation threshold for HIIT detection:
-
-1. Navigate to **Interval Analysis**
-2. Adjust the **Correlation Threshold** (0.0 - 1.0)
-   - Higher values = more selective detection
-   - Lower values = more inclusive detection
-3. Click **Save Threshold** to persist your settings
-4. Use **Clear Saved Threshold** to reset to automatic detection
-
-### Settings Persistence
-- Correlation thresholds are saved per file in `settings/correlation_threshold_<filename>.json`
-- Manual window selections are saved in `data/<filename>_manual_window.json`
-
-## Technical Details
-
-### Key Algorithms
-- **Frequency Analysis**: Uses FFT and correlation to detect periodic patterns
-- **HIIT Detection**: Template matching with configurable correlation thresholds
-- **Interval Segmentation**: Speed-based edge detection for high/recovery periods
-- **Performance Metrics**: Heart rate analysis, speed variability, and responsiveness
-
-### Color Scheme
-The application maintains a consistent color scheme across both versions:
-- **Heart Rate**: Red (`#FF4444`)
-- **Speed**: Yellow (`#FFFF44`)
-- **Altitude**: Blue (`#4444FF`)
-- **Distance/Position**: Green (`#44FF44`)
-- **Temperature**: White (`#FFFFFF`)
-
-### Dark Theme
-Both versions use a dark theme optimized for data visualization:
-- Background: `#0E1117`
-- Cards/Panels: `#262730`
-- Text: `#FAFAFA`
-- Borders: `#464646`
-
-## Troubleshooting
-
-### Common Issues
-
-1. **No FIT files found**
-   - Ensure `.fit` files are in the `data/` directory
-   - Check file permissions
-
-2. **Import errors**
-   - Install dependencies: `pip install -r requirements_dash.txt`
-   - Ensure Python 3.7+ is being used
-
-3. **Port conflicts**
-   - Dash runs on port 8050 by default
-   - Streamlit runs on port 8501 by default
-   - Modify the port in the respective app files if needed
-
-4. **Performance issues**
-   - Large FIT files may take time to process
-   - Consider reducing the analysis window for very long activities
-
-### Development
-
-To modify or extend the application:
-
-1. **Core Logic**: Edit files in the `hiit/` directory
-2. **Dash UI**: Modify `app_dash.py`
-3. **Streamlit UI**: Modify `hiit/ui.py`
-4. **Add Dependencies**: Update `requirements_dash.txt` or `requirements.txt`
-
-## License
-
-[Add your license information here]
-
-## Contributing
-
-[Add contribution guidelines here]
-
-## Support
-
-[Add support/contact information here]
+The application provides comprehensive visualization of detected intervals, frequency analysis, and performance trends to support training optimization.

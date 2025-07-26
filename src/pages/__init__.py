@@ -1,0 +1,1 @@
+"""Pages module for the HIIT Analyzer application."""

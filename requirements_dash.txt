@@ -1,9 +1,0 @@
-dash
-dash-bootstrap-components
-pandas
-numpy
-plotly
-fitparse
-scikit-learn
-scipy
-gunicorn
